@@ -1,10 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Main where
 
+import           HTwist.Utils
+import           HTwist.Types
+
 -- import           Sound.RtMidi
 import           Control.Monad.State
+import           Control.Monad.Reader
 import qualified Data.HashMap.Strict as HM
+import           Data.IORef
 import           Data.Maybe
 import           Data.Monoid
 import           System.MIDI
@@ -12,26 +18,29 @@ import           System.MIDI.Utility
 import           Numeric
 import           Foreign.C
 
+type Env a = ReaderT (IORef a) IO ()
 
-type Channel  = Int
-type CCNumber = Int
-type ListenerFunction = (MidiEvent -> IO ())
+type ListenerFunction = (TwisterState -> MidiEvent -> Env TwisterState) -- IO ())
+type CCFunction = (Connection -> CCNumber -> CCValue -> IO ())
 
 type MIDIListener = MidiEvent -> IO ()
 
 data CCListener = CCListener {
-         func  :: (MidiEvent -> IO ())
+         func  :: ListenerFunction
         ,chan  :: Maybe Channel
         ,ccNum :: Maybe CCNumber
     }
 
+-- data TwisterState = TwisterState {
+--         num :: Int
+--     } deriving (Show,Eq)
+
 makeCCListener
-    :: (MidiEvent -> IO ())
+    :: ListenerFunction
     -> Maybe Channel
     -> Maybe CCNumber
     -> CCListener
 makeCCListener = CCListener
-
 
 addCCListeners :: Listeners -> [CCListener] -> Listeners
 addCCListeners ls []     = ls
@@ -43,9 +52,8 @@ addCCListener ls (CCListener fn ch nm) = HM.insert ch nmap' ls
         nmap  = fromMaybe mempty $ HM.lookup ch ls
         nmap' = HM.insertWith (<>) nm [fn] nmap
 
-
-
--- HashMap: Maybe Channel (HashMap Maybe Num [Function])
+makeCCListenersFor :: ListenerFunction -> Maybe Channel ->  [CCNumber] -> [CCListener]
+makeCCListenersFor fn chn = map (\n -> makeCCListener fn chn (Just n))
 
 type Listeners = HM.HashMap (Maybe Channel) (HM.HashMap (Maybe CCNumber) [ListenerFunction])
 
@@ -57,35 +65,71 @@ getListenersFor ls ch nm = nn <> nj <> jn <> jj
         jn = fromMaybe [] $ HM.lookup (Just ch) ls  >>= HM.lookup Nothing
         jj = fromMaybe [] $ HM.lookup (Just ch) ls  >>= HM.lookup (Just nm)
 
--- get Nothing -> Nothing listeners
--- get Nothing -> Just x  listeners
--- get Just x  -> Nothing listeners
--- get Just x  -> Just x  listeners
+runCCFunction :: CCFunction -> ListenerFunction
+runCCFunction fn ts me = fn out n vl
+    where
+        vl      = getCCValue me
+        n       = getCCNumber me
+        out     = tsOutputConnection ts
 
+changeValue :: (ToCC a) => Connection -> CCNumber -> a -> IO ()
+changeValue out knb n = send out $ MidiMessage (toCCChannel n) (CC knb (toCCValue n))
 
-selectTwister :: IO Source
-selectTwister = selectInputDevice "Midi Fighter Twister" (Just "Midi Fighter Twister")
+changeValue' :: (ToCC a) => (CCValue -> a) -> CCFunction
+changeValue' cfn out knb v = changeValue out knb $ cfn v
 
-printCallback :: Listeners -> MidiEvent -> IO ()
-printCallback ls me@(MidiEvent ts (MidiMessage ch (CC nm val))) = mapM_ (\fn -> fn me) fns
+changeAll ::CCFunction -> CCFunction
+changeAll fn con _ val = mapM_ (\n -> fn con n val) [0..15]
+
+cycleThroughColors :: Connection -> CCNumber -> CCValue -> IO ()
+cycleThroughColors out n vl = changeValue out n cl
+    where
+        loColor = fromEnum (minBound :: Color)
+        hiColor = fromEnum (maxBound :: Color)
+        vl'     = hardLerpInts 1 126 loColor hiColor vl
+        cl      = toEnum vl' :: Color
+
+selectTwisterInput :: IO Source
+selectTwisterInput = selectInputDevice "Midi Fighter Twister" (Just "Midi Fighter Twister")
+
+selectTwisterOutput :: IO Destination
+selectTwisterOutput = selectOutputDevice "Midi Fighter Twister" (Just "Midi Fighter Twister")
+
+-- printCallback :: IORef TwisterState -> Listeners -> MidiEvent -> Env TwisterState
+printCallback :: IORef TwisterState -> Listeners -> MidiEvent -> IO ()
+printCallback tref ls me@(MidiEvent tm (MidiMessage ch (CC nm val))) = do
+    ts <- readIORef tref
+    mapM_ (\fn -> fn ts me) fns
     where
         fns = getListenersFor ls ch nm
-printCallback _ me                                             = print me
+printCallback _ _ me                                               = liftIO $ print me
+
 
 test :: IO ()
 test = do
     let ls  = mempty
         ls' = addCCListeners ls
-            $ [ makeCCListener (\me -> print me) Nothing Nothing
-              , makeCCListener (\_ -> print "doing it on channel 1") (Just 1) Nothing
-              , makeCCListener (\_ -> print "1 - 15") (Just 1) (Just 15)
-              , makeCCListener (\_ -> print "15 any")  Nothing (Just 15) ]
-              -- , makeCCListener (\_ -> print "doing it
-    src <- selectTwister
-    con <- openSource src (Just (printCallback ls'))
-    start con
+            $ [ makeCCListener (\_ me  -> print me) Nothing Nothing
+              , makeCCListener (\_ _   -> print "doing it on channel 1") (Just 1) Nothing
+              , makeCCListener (runCCFunction $ changeAll (changeValue' KnobStrobe)) (Just 1) (Just 12)
+              , makeCCListener (runCCFunction $ changeAll (changeValue' KnobPulse)) (Just 1) (Just 13)
+              , makeCCListener (runCCFunction $ changeAll (changeValue' KnobBrightness)) (Just 1) (Just 15)
+              , makeCCListener (runCCFunction $ changeAll (changeValue' IndicatorBrightness)) (Just 1) (Just 14) ]
+            <> makeCCListenersFor (runCCFunction cycleThroughColors) (Just 1) [0..11]
+            -- map (\n -> makeCCListener (runCCFunction cycleThroughColors) (Just 1) (Just n)) [0..11]
+
+    src  <- selectTwisterInput
+    dest <- selectTwisterOutput
+    out  <- openDestination dest
+    let ts = TwisterState src out 0
+    tref <- newIORef ts
+
+    inpt <- openSource src (Just $ printCallback tref ls')
+
+    start inpt
+    send out (MidiMessage 2 (CC 15 50))
     _ <- getLine
-    stop con
+    stop inpt
 
 
 close :: Connection -> IO ()
