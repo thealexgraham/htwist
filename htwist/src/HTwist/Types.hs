@@ -2,20 +2,65 @@
 
 module HTwist.Types where
 
+import           Data.Hashable
+import qualified Data.HashMap.Strict as HM
 import           HTwist.Utils
 import           System.MIDI
 
+class HasConnection a where
+    getInputSource      :: a -> Source
+    getOutputConnection :: a -> Connection
+
+class ToCC a where
+    toCCValue   :: a -> CCValue
+    toCCChannel :: a -> Channel
+
+-- |Retrieve the 'CCNumber' from a 'System.MIDI' 'MidiEvent'
 getCCNumber :: MidiEvent -> CCNumber
-getCCNumber (MidiEvent _ (MidiMessage _ (CC nm _))) = nm
+getCCNumber (MidiEvent _ (MidiMessage _ (CC nm _))) = CCNumber nm
 getCCNumber _                                       = error "not a CC"
 
-getCCValue :: MidiEvent -> Int
-getCCValue (MidiEvent _ (MidiMessage _ (CC _ vl))) = vl
+-- |Retrieve the 'CCValue' from a 'System.MIDI' 'MidiEvent'
+getCCValue :: MidiEvent -> CCValue
+getCCValue (MidiEvent _ (MidiMessage _ (CC _ vl))) = CCValue vl
 getCCValue _                                       = error "not a CC"
 
-newtype Channel = Int
-type CCNumber   = Int
-type CCValue    = Int
+-- newtypes for CC message components. Note that the 'System.MIDI' library uses 'Int' for
+-- these, so wrappers are needed
+newtype Channel  = Channel { unChan :: Int } deriving (Show,Eq,Num,Hashable)
+newtype CCNumber = CCNumber { unCCNum :: Int } deriving (Show,Eq,Enum,Num,Hashable)
+newtype CCValue  = CCValue { unCCVal :: Int } deriving (Show,Eq,Enum,Ord,Num,Real,Integral,Hashable)
+
+-- |Wrapper to create a System.Midi CC 'MidiMessage'' with our newtypes.
+mkCC :: CCNumber -> CCValue -> MidiMessage'
+mkCC knb vl = CC (unCCNum knb) (unCCVal vl)
+
+-- |Wrapper to create a System.Midi CC 'MidiMessage' with our newtypes.
+mkCCMessage :: Channel -> CCNumber -> CCValue -> MidiMessage
+mkCCMessage ch nm vl = MidiMessage (unChan ch) (mkCC nm vl)
+
+type Page = HM.HashMap Int TwisterKnob
+
+-- |All information about the current state of the Twister
+data TwisterState = TwisterState {
+         tsInputSource      :: Source
+        ,tsOutputConnection :: Connection
+        ,tsPages            :: HM.HashMap Int Page
+        ,tsNum              :: Int
+    }
+
+instance HasConnection TwisterState where
+    getInputSource      = tsInputSource
+    getOutputConnection = tsOutputConnection
+
+data TwisterKnob = TwisterKnob {
+         tnValue      :: CCValue
+        ,tnColor      :: Color
+        ,tnBrightness :: KnobColor
+    } deriving (Show,Eq)
+
+setKnobColor :: TwisterKnob -> Color -> TwisterKnob
+setKnobColor tn c = tn { tnColor = c }
 
 data Color = Blue
            | SkyBlue
@@ -38,9 +83,6 @@ data Color = Blue
            | Indigo
     deriving (Show,Eq,Enum,Bounded)
 
-class ToCC a where
-    toCCValue   :: a -> CCValue
-    toCCChannel :: a -> Int
 
 instance ToCC Color where
     toCCValue Blue        = 1
@@ -65,11 +107,6 @@ instance ToCC Color where
 
     toCCChannel n          = 2
 
-data TwisterState = TwisterState {
-         tsInputSource      :: Source
-        ,tsOutputConnection :: Connection
-        ,tsNum              :: Int
-    }
 
 newtype KnobColor = KnobColor { unKnobColor :: CCValue }
     deriving (Num,Show,Eq)

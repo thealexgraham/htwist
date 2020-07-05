@@ -11,7 +11,8 @@ hardLerp inLo inHi outLo outHi v = (max outLo . min outHi) lerped
     where
         lerped = lerp inLo inHi outLo outHi v
 
-hardLerpInts :: Int -> Int -> Int -> Int -> Int -> Int
+-- hardLerpInts :: Int -> Int -> Int -> Int -> Int -> Int
+hardLerpInts :: (Num a, Integral a) => a -> a -> a -> a -> a -> a
 hardLerpInts inLo inHi outLo outHi v
     = round $ hardLerp (fromIntegral inLo)
                        (fromIntegral inHi)
