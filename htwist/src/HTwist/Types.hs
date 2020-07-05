@@ -13,9 +13,9 @@ getCCValue :: MidiEvent -> Int
 getCCValue (MidiEvent _ (MidiMessage _ (CC _ vl))) = vl
 getCCValue _                                       = error "not a CC"
 
-type Channel  = Int
-type CCNumber = Int
-type CCValue  = Int
+newtype Channel = Int
+type CCNumber   = Int
+type CCValue    = Int
 
 data Color = Blue
            | SkyBlue

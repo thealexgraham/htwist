@@ -18,8 +18,8 @@ import           Foreign.C
 
 type Env a = ReaderT (IORef a) IO
 
-type ListenerFunction = (TwisterState -> MidiEvent -> Env TwisterState ()) -- IO ())
-type CCFunction = (Connection -> CCNumber -> CCValue -> Env TwisterState ())
+type ListenerFunction = (MidiEvent -> Env TwisterState ())
+type CCFunction       = (Connection -> CCNumber -> CCValue -> Env TwisterState ())
 
 data CCListener = CCListener {
          func  :: ListenerFunction
@@ -74,9 +74,17 @@ getListenersFor ls ch nm = nn <> nj <> jn <> jj
         jj = fromMaybe [] $ HM.lookup (Just ch) ls  >>= HM.lookup (Just nm)
 
 runCCFunction :: CCFunction -> ListenerFunction
-runCCFunction fn ts me = do
+runCCFunction fn me = do
     out <- tsOutputConnection <$> getState
     fn out n vl
     where
         vl      = getCCValue me
         n       = getCCNumber me
+
+printCallback :: IORef TwisterState -> Listeners -> MidiEvent -> IO ()
+printCallback tref ls me@(MidiEvent tm (MidiMessage ch (CC nm val))) = do
+    ts <- readIORef tref
+    mapM_ (\fn -> runReaderT (fn me) tref) fns
+    where
+        fns = getListenersFor ls ch nm
+printCallback _ _ me                                               = liftIO $ print me

@@ -40,22 +40,12 @@ selectTwisterInput = selectInputDevice "Midi Fighter Twister" (Just "Midi Fighte
 selectTwisterOutput :: IO Destination
 selectTwisterOutput = selectOutputDevice "Midi Fighter Twister" (Just "Midi Fighter Twister")
 
--- printCallback :: IORef TwisterState -> Listeners -> MidiEvent -> Env TwisterState
-printCallback :: IORef TwisterState -> Listeners -> MidiEvent -> IO ()
-printCallback tref ls me@(MidiEvent tm (MidiMessage ch (CC nm val))) = do
-    ts <- readIORef tref
-    mapM_ (\fn -> runReaderT (fn ts me) tref) fns
-    where
-        fns = getListenersFor ls ch nm
-printCallback _ _ me                                               = liftIO $ print me
-
-
-test :: IO ()
-test = do
+main :: IO ()
+main = do
     let ls  = mempty
         ls' = addCCListeners ls
-            $ [ makeCCListener (\_ me  -> liftIO $ print me) Nothing Nothing
-              , makeCCListener (\_ _   -> liftIO $ print "doing it on channel 1") (Just 1) Nothing
+            $ [ makeCCListener (\me  -> liftIO $ print me) Nothing Nothing
+              , makeCCListener (\_   -> liftIO $ print "doing it on channel 1") (Just 1) Nothing
               , makeCCListener (runCCFunction $ changeAll (changeValue' KnobStrobe)) (Just 1) (Just 12)
               , makeCCListener (runCCFunction $ changeAll (changeValue' KnobPulse)) (Just 1) (Just 13)
               , makeCCListener (runCCFunction $ changeAll (changeValue' KnobBrightness)) (Just 1) (Just 15)
@@ -81,5 +71,5 @@ test = do
 close :: Connection -> IO ()
 close = stop
 
-main :: IO ()
-main = putStrLn "Hello, Haskell!"
+test :: IO ()
+test = main
