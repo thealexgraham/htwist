@@ -2,6 +2,8 @@
 
 module HTwist.Types where
 
+import           Data.Text
+
 import           Data.Hashable
 import qualified Data.HashMap.Strict as HM
 import           HTwist.Utils
